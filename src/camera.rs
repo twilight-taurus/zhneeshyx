@@ -6,9 +6,6 @@ use std::f32::consts::FRAC_PI_2;
 
 use std::cell::Cell;
 
-
-
-
 #[derive(Debug)]
 pub struct CameraController {
 
@@ -24,18 +21,17 @@ pub struct CameraController {
 
     move_speed: f32,
 
-    rotate_left: Cell<bool>,
-    rotate_right : Cell<bool>,
-    rotate_up: Cell<bool>,
-    rotate_down: Cell<bool>,
+    rotate: Cell<bool>,
+    rotate_horizontal : Cell<f32>,
+    rotate_vertical: Cell<f32>,
     
     rotate_speed: f32,
 
-    scroll: f32,
+    scroll_speed: f32,
     sensitivity: f32,
 }
 
-/*
+
 impl CameraController {
     pub fn new() -> Self {
         Self {
@@ -48,19 +44,18 @@ impl CameraController {
 
             move_speed: 1.0,
 
-            rotate_left: Cell::new(false),
-            rotate_right : Cell::new(false),
-            rotate_up: Cell::new(false),
-            rotate_down: Cell::new(false),
+            rotate: Cell::new(false),
+            rotate_horizontal : Cell::new(0.0),
+            rotate_vertical: Cell::new(0.0),
 
             rotate_speed: 1.0,
 
-            scroll: 0.0,
-            sensitivity,
+            scroll_speed: 1.0,
+            sensitivity: 1.0,
         }
     }
 
-    pub fn process_keydown(&self, key: VirtualKeyCode, state: ElementState) {
+    pub fn process_keydown(&self, key: VirtualKeyCode) {
         match key {
             VirtualKeyCode::W | VirtualKeyCode::Up => {
                 self.move_forward.set(true);
@@ -84,7 +79,7 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyup(&self, key: VirtualKeyCode, state: ElementState) {
+    pub fn process_keyup(&self, key: VirtualKeyCode) {
         match key {
             VirtualKeyCode::W | VirtualKeyCode::Up => {
                 self.move_forward.set(false);
@@ -96,18 +91,18 @@ impl CameraController {
                 self.move_left.set(false);
             }
             VirtualKeyCode::D | VirtualKeyCode::Right => {
-                self.move_right.set(true);
+                self.move_right.set(false);
             }
             VirtualKeyCode::Space => {
-                self.move_up.set(true);
+                self.move_up.set(false);
             }
             VirtualKeyCode::LShift => {
-                self.move_down.set(true);
+                self.move_down.set(false);
             }
             _ => (),
         }
     }
-
+/*
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
         self.rotate_horizontal = mouse_dx as f32;
         self.rotate_vertical = mouse_dy as f32;
@@ -123,49 +118,41 @@ impl CameraController {
             }) => *scroll as f32,
         };
     }
+*/
+    pub fn update_camera(&mut self, camera: &mut Camera) {
+        use cgmath::InnerSpace;
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
-        let dt = dt.as_secs_f32();
+        let forward = camera.target - camera.eye;
+        let forward_norm = forward.normalize();
+        let forward_mag = forward.magnitude();
 
-        // Move forward/backward and left/right
-        let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
-        let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
-        let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position += forward * (self.move_forward - self.move_backward) * self.speed * dt;
-        camera.position += right * (self.move_right - self.move_left) * self.speed * dt;
+       // Prevents glitching when camera gets too close to the
+        // center of the scene.
+        if self.move_forward.get() /*&& ( forward_mag > self.move_speed ) */ {
+            camera.eye += forward_norm * self.move_speed;
+        }
+        if self.move_backward.get() {
+            camera.eye -= forward_norm * self.move_speed;
+        }
 
-        // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
-        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
-        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
-        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
-        self.scroll = 0.0;
+        let right = forward_norm.cross(camera.up);
 
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
-        camera.position.y += (self.move_up - self.move_down) * self.speed * dt;
+        // Redo radius calc in case the up/ down is pressed.
+        let forward = camera.target - camera.eye;
+        let forward_mag = forward.magnitude();
 
-        // Rotate
-        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
-        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
-
-        // If process_mouse isn't called every frame, these values
-        // will not get set to zero, and the camera will rotate
-        // when moving in a non cardinal direction.
-        self.rotate_horizontal = 0.0;
-        self.rotate_vertical = 0.0;
-
-        // Keep the camera's angle from going too high/low.
-        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = -Rad(SAFE_FRAC_PI_2);
-        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = Rad(SAFE_FRAC_PI_2);
+        if self.move_right.get() {
+            // Rescale the distance between the target and eye so 
+            // that it doesn't change. The eye therefore still 
+            // lies on the circle made by the target and eye.
+            camera.eye = camera.target - (forward + right * self.move_speed).normalize() * forward_mag;
+        }
+        if self.move_left.get() {
+            camera.eye = camera.target - (forward - right * self.move_speed).normalize() * forward_mag;
         }
     }
 }
-*/
+
 
 /*
     - cgmath crate is built for OpenGL's coordinate system.
@@ -192,6 +179,27 @@ pub struct Camera {
 }
 
 impl Camera {
+    pub fn new(config: &wgpu::SurfaceConfiguration) -> Self {
+        Self {
+
+            //// view ////
+
+            // position the camera one unit up and 2 units back
+            // +z is out of the screen
+            eye: (0.0, 1.0, 2.0).into(),
+            // have it look at the origin
+            target: (0.0, 0.0, 0.0).into(),
+            // which way is "up"
+            up: cgmath::Vector3::unit_y(),
+
+            //// projection ////
+
+            aspect: config.width as f32 / config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        }
+    }
     fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
         // 1.
         let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
@@ -207,27 +215,28 @@ impl Camera {
 #[repr(C)]
 // This is so we can store this in a buffer
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
+pub struct UniformBuffer {
     // We can't use cgmath with bytemuck directly so we'll have
     // to convert the Matrix4 into a 4x4 f32 array
     view_proj: [[f32; 4]; 4],
 }
 
-impl CameraUniform {
-    fn new() -> Self {
+impl UniformBuffer {
+    pub fn new() -> Self {
         use cgmath::SquareMatrix;
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
         }
     }
 
-    fn update_view_proj(&mut self, camera: &Camera) {
+    pub fn update_view_proj(&mut self, camera: &Camera) {
         self.view_proj = camera.build_view_projection_matrix().into();
     }
 }
 
 
-// projection split from the camera.
+// projection split from the camera. (deprecated)
+#[deprecated]
 pub struct Projection {
     aspect: f32,
     fovy: Rad<f32>,

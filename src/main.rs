@@ -44,6 +44,14 @@ struct State {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
+
+    camera: camera::Camera,
+    camera_config: camera::UniformBuffer,
+    camera_buffer: wgpu::Buffer,
+    camera_bindgroup: wgpu::BindGroup, 
+
+    camera_controller: camera::CameraController,
+
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     time: Instant,
@@ -54,7 +62,6 @@ struct State {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 
-//    num_vertices: u32,
     num_indices: u32,
 
     bind_group_index: usize,
@@ -201,7 +208,48 @@ impl State {
 
         groups.push(diffuse_bind_group);
         groups.push(diffuse_bind_group2);
-        
+
+        // camera
+        let camera = camera::Camera::new(&config);
+
+        let mut camera_config = camera::UniformBuffer::new();
+        camera_config.update_view_proj(&camera);
+
+        let camera_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(&[camera_config]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
+
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            ],
+            label: Some("camera_bind_group_layout"),
+        });
+
+        let camera_bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                }
+            ],
+            label: Some("camera_bind_group"),
+        });
+
         // create shader
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -211,7 +259,7 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout],
+                bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -242,7 +290,8 @@ impl State {
                 topology: wgpu::PrimitiveTopology::TriangleList, // 1.
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw, // 2.
-                cull_mode: Some(wgpu::Face::Back),
+//                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLAMPING
@@ -286,14 +335,24 @@ impl State {
             contents: bytemuck::cast_slice(INDICES),
             usage: wgpu::BufferUsages::INDEX,
         });
-//        let num_vertices = VERTICES.len() as u32;
+
         let num_indices = INDICES.len() as u32;
 
+        // camera controller
+        let camera_controller = camera::CameraController::new();
 
         Self {
             surface,
             device,
             queue,
+
+            camera,
+            camera_config: camera_config,
+            camera_buffer,
+            camera_bindgroup,
+
+            camera_controller,
+
             config,
             size,
             time: Instant::now(),
@@ -341,8 +400,15 @@ impl State {
                     // switch index.
                     self.bind_group_index = (self.bind_group_index + 1) % self.diffuse_bind_groups.len();
                     true
-                } else{
-                    false
+                } else {
+                    if input.state == ElementState::Pressed {
+                        println!("Pressed!");
+                        self.camera_controller.process_keydown(input.virtual_keycode.unwrap() );
+                    } else if input.state == ElementState::Released {
+                        println!("Released!");
+                        self.camera_controller.process_keyup(input.virtual_keycode.unwrap() );
+                    }
+                    true      
                 }
             }
             
@@ -351,7 +417,9 @@ impl State {
     }
 
     fn update(&mut self) {
-//        todo!()
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_config.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice( &[self.camera_config] ));
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {    
@@ -391,6 +459,7 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
 
             render_pass.set_bind_group( 0, self.diffuse_bind_groups.get(self.bind_group_index).unwrap(), &[] );
+            render_pass.set_bind_group(1, &self.camera_bindgroup, &[]);
 
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -422,28 +491,28 @@ fn main() {
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { ref event, window_id } => {
             if window_id == window.id() {
-                state.input(event);
-
-                match event {
-                    WindowEvent::Resized(physical_size) => {
-                        state.resize(*physical_size);
+                if !state.input(event) {
+                    match event {
+                        WindowEvent::Resized(physical_size) => {
+                            state.resize(*physical_size);
+                        }
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            // new_inner_size is &&mut so we have to dereference it twice
+                            state.resize(**new_inner_size);
+                        }
+                        WindowEvent::CloseRequested
+                        | WindowEvent::KeyboardInput {
+                            input:
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::Escape),
+                                    ..
+                                },
+                            ..
+                        } => *control_flow = ControlFlow::Exit,
+                        _ => {}
                     }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        // new_inner_size is &&mut so we have to dereference it twice
-                        state.resize(**new_inner_size);
-                    }
-                    WindowEvent::CloseRequested
-                    | WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            },
-                        ..
-                    } => *control_flow = ControlFlow::Exit,
-                    _ => {}
-                }
+                }    
             }
         }
         Event::RedrawRequested(_) => {
