@@ -6,39 +6,15 @@ use winit::{
 use std::time::Instant;
 use wgpu::util::DeviceExt;
 
+use crate::vertex::*;
+use anyhow::*;
+
 pub mod texture;
 pub mod camera;
+pub mod light;
+pub mod model;
+pub mod vertex;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    uv: [f32; 2],
-}
-
-//unsafe impl bytemuck::Pod for Vertex {}
-//unsafe impl bytemuck::Zeroable for Vertex {}
-
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2, // uv coords.
-                }
-            ]
-        }
-    }
-}
 
 struct State {
     surface: wgpu::Surface,
@@ -69,6 +45,8 @@ struct State {
     texture_bind_group_layout: wgpu::BindGroupLayout,
 
     diffuse_bind_groups: Vec<wgpu::BindGroup>,
+
+    obj_model: model::Model,
 }
 
 impl State {
@@ -250,6 +228,41 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
+        let light_config = light::UniformBuffer::new();
+
+        // We'll want to update our lights position, so we use COPY_DST
+        let light_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Light VB"),
+                contents: bytemuck::cast_slice(&[light_config]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
+
+        let light_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+            label: None,
+        });
+
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buffer.as_entire_binding(),
+            }],
+            label: None,
+        });
+
         // create shader
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -259,9 +272,15 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
+                bind_group_layouts: &[
+                    &texture_bind_group_layout, 
+                    &camera_bind_group_layout, 
+                    &light_bind_group_layout
+                ],
                 push_constant_ranges: &[],
             });
+
+        // TODO: ...
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -270,7 +289,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "main", // 1.
-                buffers: &[Vertex::desc()], // 2.
+                buffers: &[vertex::MVertex::desc()], // 2.
             },
             // fragment shader stage
             fragment: Some(wgpu::FragmentState { // 3.
@@ -313,12 +332,12 @@ impl State {
             Vertex { position: [0.0, -0.5, 1.0], color: [0.0, 1.0, 0.0] },
         ];
 */
-        const VERTICES_TEX: &[Vertex] = &[
-            Vertex { position: [-0.0868241, 0.49240386, 0.0], uv: [0.4131759, 0.99240386], }, // A
-            Vertex { position: [-0.49513406, 0.06958647, 0.0], uv: [0.0048659444, 0.56958646], }, // B
-            Vertex { position: [-0.21918549, -0.44939706, 0.0], uv: [0.28081453, 0.050602943], }, // C
-            Vertex { position: [0.35966998, -0.3473291, 0.0], uv: [0.85967, 0.15267089], }, // D
-            Vertex { position: [0.44147372, 0.2347359, 0.0], uv: [0.9414737, 0.7347359], }, // E
+        const VERTICES_TEX: &[SVertex] = &[
+            SVertex { position: [-0.0868241, 0.49240386, 0.0], uv: [0.4131759, 0.99240386], }, // A
+            SVertex { position: [-0.49513406, 0.06958647, 0.0], uv: [0.0048659444, 0.56958646], }, // B
+            SVertex { position: [-0.21918549, -0.44939706, 0.0], uv: [0.28081453, 0.050602943], }, // C
+            SVertex { position: [0.35966998, -0.3473291, 0.0], uv: [0.85967, 0.15267089], }, // D
+            SVertex { position: [0.44147372, 0.2347359, 0.0], uv: [0.9414737, 0.7347359], }, // E
         ];
 
         const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, /* padding */ 0];
@@ -340,6 +359,15 @@ impl State {
 
         // camera controller
         let camera_controller = camera::CameraController::new();
+
+        let res_dir = std::path::Path::new( env!("OUT_DIR") ).join("res");
+        let obj_model = model::Model::load(
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+            res_dir.join("terrain01.obj"),
+        ).unwrap();
+
 
         Self {
             surface,
@@ -368,7 +396,9 @@ impl State {
             bind_group_index: 0 as usize,
 
             texture_bind_group_layout,
-            diffuse_bind_groups: groups
+            diffuse_bind_groups: groups,
+
+            obj_model
         }
     }
 
@@ -461,6 +491,9 @@ impl State {
             render_pass.set_bind_group( 0, self.diffuse_bind_groups.get(self.bind_group_index).unwrap(), &[] );
             render_pass.set_bind_group(1, &self.camera_bindgroup, &[]);
 
+            use model::DrawModel;
+
+            render_pass.draw_mesh(&self.obj_model.meshes[0]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 //            render_pass.draw(0..self.num_vertices, 0..1);

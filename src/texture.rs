@@ -1,8 +1,15 @@
 use image::{GenericImageView, Pixel};
-use anyhow::*;
+//use anyhow::*;
 
 use image::{ImageFormat, DynamicImage, ImageBuffer};
 use image::error::ImageResult;
+
+use std::path::Path;
+
+use std::time::Instant;
+use wgpu::util::DeviceExt;
+
+use anyhow::{Context, Result};
 
 // Textures: Efficient way of rendering highly detailed objects.
 // -> images overlayed on a triangle mesh.
@@ -24,6 +31,19 @@ pub struct Texture {
 }
 
 impl Texture {
+    pub fn load<P: AsRef<Path>>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: P,
+    ) -> Result<Self> {
+        // Needed to appease the borrow checker
+        let path_copy = path.as_ref().to_path_buf();
+        let label = path_copy.to_str();
+        
+        let img = image::open(path)?;
+        Self::from_image(device, queue, &img, label)
+    }
+
     pub fn from_bytes(
         bytes: &[u8],
         device: &wgpu::Device,
