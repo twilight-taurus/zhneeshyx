@@ -11,6 +11,7 @@ var<uniform> camera: CameraUniform;
 struct VertexInput {
     [[location(0)]] position: vec3<f32>;
     [[location(1)]] uv: vec2<f32>;
+    [[location(2)]] norm: vec3<f32>;
 };
 
 struct VertexOutput {

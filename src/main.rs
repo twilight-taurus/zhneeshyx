@@ -227,7 +227,7 @@ impl State {
             ],
             label: Some("camera_bind_group"),
         });
-
+/*
         let light_config = light::UniformBuffer::new();
 
         // We'll want to update our lights position, so we use COPY_DST
@@ -253,7 +253,7 @@ impl State {
             }],
             label: None,
         });
-
+ 
         let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &light_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -262,7 +262,7 @@ impl State {
             }],
             label: None,
         });
-
+*/
         // create shader
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Basic Shader"),
@@ -274,8 +274,7 @@ impl State {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
                     &texture_bind_group_layout, 
-                    &camera_bind_group_layout, 
-                    &light_bind_group_layout
+                    &camera_bind_group_layout
                 ],
                 push_constant_ranges: &[],
             });
@@ -309,8 +308,9 @@ impl State {
                 topology: wgpu::PrimitiveTopology::TriangleList, // 1.
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw, // 2.
-//                cull_mode: Some(wgpu::Face::Back),
-                cull_mode: None,
+
+                cull_mode: Some(wgpu::Face::Back),
+//                cull_mode: None,
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLAMPING
@@ -332,6 +332,7 @@ impl State {
             Vertex { position: [0.0, -0.5, 1.0], color: [0.0, 1.0, 0.0] },
         ];
 */
+
         const VERTICES_TEX: &[SVertex] = &[
             SVertex { position: [-0.0868241, 0.49240386, 0.0], uv: [0.4131759, 0.99240386], }, // A
             SVertex { position: [-0.49513406, 0.06958647, 0.0], uv: [0.0048659444, 0.56958646], }, // B
@@ -366,8 +367,7 @@ impl State {
             &queue,
             &texture_bind_group_layout,
             res_dir.join("terrain01.obj"),
-        ).unwrap();
-
+        ).expect("Unable to create Model.");
 
         Self {
             surface,
@@ -494,10 +494,10 @@ impl State {
             use model::DrawModel;
 
             render_pass.draw_mesh(&self.obj_model.meshes[0]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+//            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+//            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 //            render_pass.draw(0..self.num_vertices, 0..1);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+//            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
 //            render_pass.draw(0..3, 0..1); // 3 vertices, once instance.
 
         } // -->

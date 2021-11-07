@@ -37,18 +37,18 @@ impl Model {
                 single_index: true,
                 ..Default::default()
             },
-        )?;
+        ).expect("Unable to load model.");
 
-        let obj_materials = obj_materials.unwrap();
+        let obj_materials = obj_materials.expect("Unable to unwrap obj_materials.");
 
         // We're assuming that the texture files are stored with the obj file
         let containing_folder = path.as_ref().parent()
-            .context("Directory has no parent")?;
+            .context("Directory has no parent").expect("No parent directory found.");
 
         let mut materials = Vec::new();
         for mat in obj_materials {
             let diffuse_path = mat.diffuse_texture;
-            let diffuse_texture = Texture::load(device, queue, containing_folder.join(diffuse_path))?;
+            let diffuse_texture = Texture::load(device, queue, containing_folder.join(diffuse_path)).expect("Unable to load diffuse texture.");
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout,
@@ -84,9 +84,12 @@ impl Model {
                     ],
                     uv: [m.mesh.texcoords[i * 2], m.mesh.texcoords[i * 2 + 1]],
                     norm: [
-                        m.mesh.normals[i * 3],
-                        m.mesh.normals[i * 3 + 1],
-                        m.mesh.normals[i * 3 + 2],
+//                        m.mesh.normals[i * 3],
+                        0.0,
+//                        m.mesh.normals[i * 3 + 1],
+                        0.0,
+//                        m.mesh.normals[i * 3 + 2],
+                        0.0,
                     ],
                 });
             }
